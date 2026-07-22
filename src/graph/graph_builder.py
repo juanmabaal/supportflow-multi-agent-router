@@ -12,6 +12,10 @@ from src.graph.router import orchestrator_node, route_by_department
 from src.graph.state import SupportFlowState
 from src.schemas.rag_response import RAGAgentResponse
 
+from src.agents.evaluator import evaluate_response_quality
+from src.config.settings import ENABLE_LANGFUSE_SCORING
+from src.observability.langfuse_client import record_evaluation_scores
+
 
 AgentRunner = Callable[[str], RAGAgentResponse]
 
@@ -135,6 +139,7 @@ def build_supportflow_graph():
     graph.add_node("finance_agent", finance_agent_node)
     graph.add_node("legal_agent", legal_agent_node)
     graph.add_node("fallback", fallback_node)
+    graph.add_node("evaluator", evaluator_node)
 
     graph.add_edge(START, "orchestrator")
 
@@ -150,11 +155,13 @@ def build_supportflow_graph():
         },
     )
 
-    graph.add_edge("hr_agent", END)
-    graph.add_edge("tech_agent", END)
-    graph.add_edge("finance_agent", END)
-    graph.add_edge("legal_agent", END)
-    graph.add_edge("fallback", END)
+    graph.add_edge("hr_agent", "evaluator")
+    graph.add_edge("tech_agent", "evaluator")
+    graph.add_edge("finance_agent", "evaluator")
+    graph.add_edge("legal_agent", "evaluator")
+    graph.add_edge("fallback", "evaluator")
+
+    graph.add_edge("evaluator", END)
 
     return graph.compile()
 
@@ -162,6 +169,7 @@ def build_supportflow_graph():
 def run_supportflow_graph(
     question: str,
     enable_observability: bool = False,
+    enable_scoring: bool = False,
     user_id: str | None = None,
     session_id: str | None = None,
 ) -> dict:
@@ -169,8 +177,11 @@ def run_supportflow_graph(
 
     initial_state: SupportFlowState = {
         "user_question": question,
+        "user_id": user_id,
+        "session_id": session_id,
+        "enable_scoring": enable_scoring,
     }
-    
+
     config = {}
 
     if enable_observability:
@@ -183,12 +194,12 @@ def run_supportflow_graph(
                 "langgraph",
                 "multi-agent",
                 "rag",
-                "stage-6-observability",
+                "stage-7-evaluator-agent",
             ],
             metadata={
                 "component": "langgraph_orchestrator",
                 "workflow": "supportflow_multi_agent_router",
-                "stage": "stage_6_langfuse_observability",
+                "stage": "stage_7_evaluator_agent",
             },
         )
 
@@ -201,3 +212,45 @@ def run_supportflow_graph(
         final_state = app.invoke(initial_state)
 
     return final_state["final_response"]
+
+def evaluator_node(state: SupportFlowState) -> SupportFlowState:
+    final_response = state["final_response"]
+
+    evaluation = evaluate_response_quality(final_response)
+
+    should_record_scores = bool(
+        state.get("enable_scoring", ENABLE_LANGFUSE_SCORING)
+    )
+
+    score_result = {
+        "recorded": False,
+        "reason": "Scoring disabled.",
+    }
+
+    if should_record_scores:
+        score_result = record_evaluation_scores(
+            evaluation=evaluation,
+            session_id=state.get("session_id"),
+            trace_id=state.get("trace_id"),
+            metadata={
+                "user_question": state.get("user_question"),
+                "detected_department": state.get("detected_department"),
+                "agent_name": state.get("agent_name"),
+                "routing_confidence": state.get("routing_confidence"),
+                "stage": "stage_7_evaluator_agent",
+            },
+        )
+
+    updated_final_response = {
+        **final_response,
+        "evaluation": evaluation.model_dump(),
+        "langfuse_scoring": score_result,
+    }
+
+    return {
+        **state,
+        "evaluation": evaluation.model_dump(),
+        "evaluation_recorded": score_result.get("recorded", False),
+        "evaluation_error": None if score_result.get("recorded") else score_result.get("reason"),
+        "final_response": updated_final_response,
+    }

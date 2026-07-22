@@ -8,8 +8,13 @@ class RoutingDecision(TypedDict):
     reason: str
     matched_keywords: list[str]
 
-class SupportFlowState(TypedDict, total =False):
+class SupportFlowState(TypedDict, total=False):
     user_question: str
+
+    user_id: str | None
+    session_id: str | None
+    trace_id: str | None
+    enable_scoring: bool
 
     detected_department: DepartmentRoute
     routing_confidence: float
@@ -19,6 +24,10 @@ class SupportFlowState(TypedDict, total =False):
     agent_name: str
     answer: str
     sources: list[dict[str, Any]]
+
+    evaluation: dict[str, Any]
+    evaluation_recorded: bool
+    evaluation_error: str | None
 
     final_response: dict[str, Any]
     error: str | None

@@ -50,6 +50,16 @@ LANGFUSE_RELEASE = os.getenv(
     "supportflow-local",
 )
 
+
+# Evaluator settings
+EVALUATION_PASS_THRESHOLD = float(
+    os.getenv("EVALUATION_PASS_THRESHOLD", "7.0")
+)
+
+ENABLE_LANGFUSE_SCORING = (
+    os.getenv("ENABLE_LANGFUSE_SCORING", "true").lower() == "true"
+)
+
 def validate_llm_provider(provider: str) -> str:
     normalized_provider = provider.lower()
 

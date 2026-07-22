@@ -1,6 +1,10 @@
 import os
+from typing import Any
 
 from langfuse.langchain import CallbackHandler
+
+from langfuse import get_client
+from src.schemas.evaluation import EvaluationResult
 
 from src.config.settings import (
     LANGFUSE_ENVIRONMENT,
@@ -67,3 +71,96 @@ def build_langfuse_config(
         },
         "tags": tags or [],
     }
+
+def get_langfuse_client():
+    if not is_langfuse_configured():
+        return None
+
+    configure_langfuse_environment()
+
+    return get_client()
+
+
+def flush_langfuse() -> None:
+    client = get_langfuse_client()
+
+    if client is None:
+        return
+
+    if hasattr(client, "flush"):
+        client.flush()
+
+
+def record_evaluation_scores(
+    evaluation: EvaluationResult,
+    session_id: str | None,
+    trace_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    client = get_langfuse_client()
+
+    if client is None:
+        return {
+            "recorded": False,
+            "reason": "Langfuse is not configured.",
+        }
+
+    if not session_id and not trace_id:
+        return {
+            "recorded": False,
+            "reason": "No session_id or trace_id was provided for scoring.",
+        }
+
+    score_metadata = metadata or {}
+
+    score_payloads = [
+        ("eval_relevance", float(evaluation.relevance)),
+        ("eval_completeness", float(evaluation.completeness)),
+        ("eval_accuracy", float(evaluation.accuracy)),
+        ("eval_groundedness", float(evaluation.groundedness)),
+        ("eval_clarity", float(evaluation.clarity)),
+        ("eval_overall_quality", float(evaluation.overall_score)),
+    ]
+
+    try:
+        for score_name, score_value in score_payloads:
+            client.create_score(
+                name=score_name,
+                value=score_value,
+                session_id=session_id,
+                trace_id=trace_id,
+                data_type="NUMERIC",
+                comment=evaluation.reason[:500],
+                metadata={
+                    **score_metadata,
+                    "passed": evaluation.passed,
+                    "risk_level": evaluation.risk_level,
+                },
+            )
+
+        client.create_score(
+            name="eval_passed",
+            value=1.0 if evaluation.passed else 0.0,
+            session_id=session_id,
+            trace_id=trace_id,
+            data_type="BOOLEAN",
+            comment=evaluation.reason[:500],
+            metadata={
+                **score_metadata,
+                "overall_score": evaluation.overall_score,
+                "risk_level": evaluation.risk_level,
+            },
+        )
+
+        flush_langfuse()
+
+        return {
+            "recorded": True,
+            "reason": "Evaluation scores were recorded in Langfuse.",
+        }
+
+    except Exception as error:
+        return {
+            "recorded": False,
+            "reason": str(error),
+        }
