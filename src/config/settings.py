@@ -40,6 +40,16 @@ LANGFUSE_HOST = os.getenv(
     "https://cloud.langfuse.com",
 )
 
+LANGFUSE_ENVIRONMENT = os.getenv(
+    "LANGFUSE_ENVIRONMENT",
+    "development",
+)
+
+LANGFUSE_RELEASE = os.getenv(
+    "LANGFUSE_RELEASE",
+    "supportflow-local",
+)
+
 def validate_llm_provider(provider: str) -> str:
     normalized_provider = provider.lower()
 

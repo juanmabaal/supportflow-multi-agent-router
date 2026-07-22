@@ -2,6 +2,8 @@ from typing import Callable
 
 from langgraph.graph import END, START, StateGraph
 
+from src.observability.langfuse_client import build_langfuse_config
+
 from src.agents.finance_agent import answer_finance_question
 from src.agents.hr_agent import answer_hr_question
 from src.agents.legal_agent import answer_legal_question
@@ -32,6 +34,10 @@ def serialize_agent_response(
         "agent_name": response.agent_name,
         "answer": response.answer,
         "sources": sources,
+        "observability": {
+        "provider": "langfuse",
+        "traceable": True,
+        },
     }
 
     return {
@@ -103,6 +109,10 @@ def fallback_node(state: SupportFlowState) -> SupportFlowState:
         "agent_name": "Fallback Support Router",
         "answer": answer,
         "sources": [],
+        "observability": {
+        "provider": "langfuse",
+        "traceable": True,
+        },
     }
 
     return {
@@ -149,13 +159,45 @@ def build_supportflow_graph():
     return graph.compile()
 
 
-def run_supportflow_graph(question: str) -> dict:
+def run_supportflow_graph(
+    question: str,
+    enable_observability: bool = False,
+    user_id: str | None = None,
+    session_id: str | None = None,
+) -> dict:
     app = build_supportflow_graph()
 
     initial_state: SupportFlowState = {
         "user_question": question,
     }
+    
+    config = {}
 
-    final_state = app.invoke(initial_state)
+    if enable_observability:
+        config = build_langfuse_config(
+            trace_name="supportflow_langgraph_workflow",
+            user_id=user_id,
+            session_id=session_id,
+            tags=[
+                "supportflow",
+                "langgraph",
+                "multi-agent",
+                "rag",
+                "stage-6-observability",
+            ],
+            metadata={
+                "component": "langgraph_orchestrator",
+                "workflow": "supportflow_multi_agent_router",
+                "stage": "stage_6_langfuse_observability",
+            },
+        )
+
+    if config:
+        final_state = app.invoke(
+            initial_state,
+            config=config,
+        )
+    else:
+        final_state = app.invoke(initial_state)
 
     return final_state["final_response"]
